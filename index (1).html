@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StudyPath AI - 受験学習プランナー</title>
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: { sans: ['DM Sans','Noto Sans JP','sans-serif'], jp: ['Noto Sans JP','sans-serif'] },
+      colors: {
+        ink: {50:'#f6f5f0',100:'#ebe9e0',200:'#d5d1c3',300:'#b8b2a0',400:'#9a9280',500:'#7f7766',600:'#6a6355',700:'#565046',800:'#48433b',900:'#3e3a33',950:'#221f1a'},
+        sumi: {DEFAULT:'#1a1815',light:'#2d2a25'},
+        washi: {DEFAULT:'#f8f6f1',dark:'#eeebe3'},
+        accent: {DEFAULT:'#c85a3a',light:'#e8845f',dark:'#a84428'},
+      }
+    }
+  }
+}
+</script>
+<style>
+html{scroll-behavior:smooth}body{background:#f8f6f1;color:#1a1815}
+.fade-in{animation:fadeIn .4s ease-out}@keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.slide-up{animation:slideUp .5s ease-out}@keyframes slideUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+.pulse-dot{animation:pulse 2s infinite}@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.typing-dot{animation:typing 1.4s infinite}.typing-dot:nth-child(2){animation-delay:.2s}.typing-dot:nth-child(3){animation-delay:.4s}
+@keyframes typing{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-4px)}}
+input:focus,select:focus,textarea:focus{outline:none;box-shadow:0 0 0 2px #c85a3a40}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#b8b2a0;border-radius:3px}
+.mc h2{font-weight:700;font-size:1.1rem;margin:1.4em 0 .5em;color:#a84428;border-bottom:1px solid #d5d1c3;padding-bottom:.3em}
+.mc h3{font-weight:600;font-size:1rem;margin:1em 0 .3em;color:#1a1815}
+.mc p{margin:.3em 0;line-height:1.75}.mc ul,.mc ol{margin:.3em 0 .3em 1.2em}.mc li{margin:.2em 0;line-height:1.7}
+.mc strong{font-weight:600;color:#a84428}
+.mc table{width:100%;border-collapse:collapse;margin:.8em 0;font-size:.82rem}
+.mc th,.mc td{border:1px solid #d5d1c3;padding:5px 8px;text-align:left}.mc th{background:#ebe9e0;font-weight:600}
+.step-card{transition:all .2s}.step-card:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.06)}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:6px 14px;border-radius:20px;font-size:13px;cursor:pointer;transition:all .15s;border:1.5px solid transparent;user-select:none}
+.chip-off{background:#fff;border-color:#d5d1c3;color:#565046}.chip-off:hover{border-color:#9a9280}
+.chip-on{background:#1a1815;border-color:#1a1815;color:#f8f6f1}
+.tab-btn{padding:8px 20px;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s}
+.tab-a{background:#1a1815;color:#f8f6f1}.tab-i{background:#fff;color:#7f7766;border:1px solid #d5d1c3}.tab-i:hover{border-color:#9a9280}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef}=React;
+
+const STORAGE='studypath_v2';
+const GRADES=['高校1年','高校2年','高校3年','浪人'];
+const STREAMS=['文系','理系'];
+const EXAM_TYPES=['一般入試','共通テスト利用','総合型選抜','学校推薦'];
+const SUBS={
+  common:['英語'],
+  文系:['国語(現代文)','国語(古文)','国語(漢文)','数学IA','数学IIB','日本史','世界史','地理','政治経済','倫理','現代社会'],
+  理系:['国語(現代文)','国語(古文)','数学IA','数学IIB','数学III','物理','化学','生物','地学','情報'],
+};
+const NEXT_EXAMS=['5月模試','6月模試','7月模試','8月模試','10月模試','11月模試','共通テスト本番','その他'];
+
+function sv(d){try{localStorage.setItem(STORAGE,JSON.stringify(d))}catch(e){}}
+function ld(){try{const d=localStorage.getItem(STORAGE);return d?JSON.parse(d):null}catch(e){return null}}
+
+function md(t){
+  if(!t)return '';
+  let h=t
+    .replace(/^## (.+)/gm,'<h2>$1</h2>')
+    .replace(/^### (.+)/gm,'<h3>$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/^\|(.+)\|$/gm,(m)=>{
+      const c=m.split('|').filter(x=>x.trim());
+      if(c.every(x=>/^[-:\s]+$/.test(x.trim())))return '<!--s-->';
+      return '<tr>'+c.map(x=>'<td>'+x.trim()+'</td>').join('')+'</tr>';
+    })
+    .replace(/((<tr>.*?<\/tr>\s*)+)/gs,(m)=>'<table>'+m+'</table>')
+    .replace(/<!--s-->/g,'')
+    .replace(/^- (.+)/gm,'<li>$1</li>')
+    .replace(/^\d+\.\s+(.+)/gm,'<li>$1</li>');
+  h=h.replace(/(<li>[\s\S]*?<\/li>)/g,(m)=>{
+    if(!m.startsWith('<ul>'))return '<ul>'+m+'</ul>';return m;
+  }).replace(/<\/ul>\s*<ul>/g,'');
+  h=h.replace(/<table>([\s\S]*?)<\/table>/g,(_,inner)=>{
+    const rows=inner.match(/<tr>[\s\S]*?<\/tr>/g)||[];
+    if(rows.length>1){const hd=rows[0].replace(/<td>/g,'<th>').replace(/<\/td>/g,'</th>');return '<table>'+hd+rows.slice(1).join('')+'</table>';}
+    return '<table>'+inner+'</table>';
+  });
+  h=h.replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>');
+  if(!h.startsWith('<'))h='<p>'+h+'</p>';
+  return h;
+}
+
+// ★ Proxy URL — set to your Cloudflare Worker
+const PROXY_URL='https://studypath-proxy.studypathai.workers.dev';
+
+async function callAI(msgs,onChunk){
+  const res=await fetch(PROXY_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:'gpt-4.1-nano',messages:msgs,stream:true,temperature:0.7,max_tokens:4000})});
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'API Error: '+res.status);}
+  const reader=res.body.getReader(),dec=new TextDecoder();let full='';
+  while(true){const{done,value}=await reader.read();if(done)break;
+    for(const line of dec.decode(value).split('\n').filter(l=>l.startsWith('data: '))){
+      const d=line.slice(6);if(d==='[DONE]')continue;
+      try{full+=JSON.parse(d).choices?.[0]?.delta?.content||'';onChunk(full);}catch(e){}
+    }}
+  return full;
+}
+
+const SYS=`あなたは日本の大学受験指導に精通した学習コーチAIです。
+
+## 最重要ルール
+- **生徒が「受験科目」として選択した科目のみ**についてプランを作成すること
+- 選択されていない科目には一切触れないこと（言及も禁止）
+- 科目別成績データ（偏差値・得点）を分析に最大限活用すること
+- 弱点科目（偏差値が低い科目）には重点的な時間配分をすること
+- 推奨教材は現在の偏差値帯に合ったものを具体的な書名で挙げること
+- テーブルは必ず | 区切りのMarkdown形式で作成すること
+- 見出しは ## と ### を使うこと`;
+
+const PLAN_Q=`以下の構成でMarkdown形式で出力してください：
+
+## 現状分析
+科目別の偏差値・得点を分析し、志望校合格に必要な目標偏差値とのギャップを表形式で示す
+
+## 全体アクションプラン
+受験までのフェーズ分けをテーブル形式で（フェーズ・期間・目標・重点科目）
+
+## 科目別学習ステップ
+選択された受験科目のみについて、現在の偏差値を踏まえた具体的な教材名・取り組み内容・週あたりの目安時間
+
+## 週次スケジュール
+曜日×時間帯のテーブル形式。弱点科目に多めの時間を配分。平日・休日の学習時間を超えないこと
+
+## 今日から始める最初の一歩
+今日すぐ取り組める具体的なアクション3つ`;
+
+const EXAM_Q=`以下の構成でMarkdown形式で出力してください：
+
+## 次の模試までの戦略
+残り期間を逆算し、現実的に伸ばせる科目と目標偏差値を提示
+
+## 科目別・優先度つき対策
+選択された受験科目のみについて、現在の偏差値と目標のギャップが大きい順に、具体的な対策・教材・1日あたりの学習時間を提示
+
+## 模試までの週間スケジュール
+残り期間に合わせた日割りのテーブル形式スケジュール
+
+## 模試当日の時間配分・解き方のコツ
+各科目の制限時間内での解答戦略と得点最大化テクニック`;
+
+// ─── Components ───
+function Steps({c,t,labels}){
+  return(<div className="flex items-center gap-1 mb-8">{Array.from({length:t},(_,i)=>(
+    <React.Fragment key={i}>
+      <div className="flex flex-col items-center gap-1">
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium transition-all ${i<c?'bg-accent text-white':i===c?'bg-sumi text-washi ring-2 ring-accent/30 ring-offset-2 ring-offset-washi':'bg-ink-100 text-ink-400'}`}>{i+1}</div>
+        <span className="text-[10px] text-ink-400 font-jp hidden sm:block">{labels[i]}</span>
+      </div>
+      {i<t-1&&<div className={`flex-1 h-0.5 mb-4 sm:mb-5 ${i<c?'bg-accent':'bg-ink-200'}`}/>}
+    </React.Fragment>))}</div>);
+}
+
+function S1({d,set,next}){
+  return(<div className="fade-in">
+    <h2 className="text-2xl font-semibold mb-1 font-jp">基本情報</h2>
+    <p className="text-ink-500 mb-8 font-jp text-sm">学年・文理・学習時間を教えてください</p>
+    <div className="space-y-5">
+      <div><label className="block text-xs font-medium text-ink-600 mb-2 font-jp">学年</label>
+        <div className="grid grid-cols-4 gap-2">{GRADES.map(g=>(<button key={g} onClick={()=>set({...d,grade:g})} className={`py-2.5 rounded-xl text-sm font-jp transition ${d.grade===g?'bg-sumi text-washi':'bg-white border border-ink-200 hover:border-ink-400'}`}>{g}</button>))}</div></div>
+      <div><label className="block text-xs font-medium text-ink-600 mb-2 font-jp">文理</label>
+        <div className="grid grid-cols-2 gap-2">{STREAMS.map(s=>(<button key={s} onClick={()=>set({...d,stream:s,subjects:['英語']})} className={`py-2.5 rounded-xl text-sm font-jp transition ${d.stream===s?'bg-sumi text-washi':'bg-white border border-ink-200 hover:border-ink-400'}`}>{s}</button>))}</div></div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><label className="block text-xs font-medium text-ink-600 mb-1.5 font-jp">平日の学習時間</label>
+          <select value={d.wdH||''} onChange={e=>set({...d,wdH:e.target.value})} className="w-full px-4 py-3 rounded-xl border border-ink-200 bg-white text-sm font-jp">
+            <option value="">選択</option>{['1時間','2時間','3時間','4時間','5時間以上'].map(h=><option key={h} value={h}>{h}</option>)}</select></div>
+        <div><label className="block text-xs font-medium text-ink-600 mb-1.5 font-jp">休日の学習時間</label>
+          <select value={d.weH||''} onChange={e=>set({...d,weH:e.target.value})} className="w-full px-4 py-3 rounded-xl border border-ink-200 bg-white text-sm font-jp">
+            <option value="">選択</option>{['2時間','3時間','4時間','5時間','6時間','8時間以上'].map(h=><option key={h} value={h}>{h}</option>)}</select></div>
+      </div>
+    </div>
+    <button onClick={next} disabled={!d.grade||!d.stream||!d.wdH||!d.weH}
+      className="mt-8 w-full py-3.5 rounded-xl bg-sumi text-washi font-medium text-sm hover:bg-sumi-light transition disabled:opacity-30 disabled:cursor-not-allowed font-jp">次へ →</button>
+  </div>);
+}
+
+function S2({d,set,next,back}){
+  const avail=[...SUBS.common,...(SUBS[d.stream]||SUBS['文系'])];
+  const subs=d.subjects||['英語'];
+  const tog=s=>{if(s==='英語')return;set({...d,subjects:subs.includes(s)?subs.filter(x=>x!==s):[...subs,s]});};
+  return(<div className="fade-in">
+    <h2 className="text-2xl font-semibold mb-1 font-jp">受験科目を選択</h2>
+    <p className="text-ink-500 mb-6 font-jp text-sm">実際に受験で使う科目だけを選んでください。選択した科目のみプランに含まれます。</p>
+    <div className="flex flex-wrap gap-2">{avail.map(s=>(
+      <span key={s} onClick={()=>tog(s)} className={`chip font-jp ${subs.includes(s)?'chip-on':'chip-off'}`}>
+        {s==='英語'&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}{s}</span>))}</div>
+    <p className="text-xs text-ink-400 mt-3 font-jp">{subs.length}科目選択中（英語は必須）</p>
+    <div className="flex gap-3 mt-8">
+      <button onClick={back} className="flex-1 py-3.5 rounded-xl border border-ink-200 text-sm font-jp hover:bg-white transition">← 戻る</button>
+      <button onClick={next} disabled={subs.length<2} className="flex-[2] py-3.5 rounded-xl bg-sumi text-washi font-medium text-sm hover:bg-sumi-light transition disabled:opacity-30 font-jp">次へ →</button>
+    </div>
+  </div>);
+}
+
+function S3({d,set,next,back}){
+  const goals=d.goals||[{school:'',faculty:'',examType:'一般入試'}];
+  const add=()=>set({...d,goals:[...goals,{school:'',faculty:'',examType:'一般入試'}]});
+  const upd=(i,f,v)=>{const g=[...goals];g[i]={...g[i],[f]:v};set({...d,goals:g});};
+  const rm=i=>set({...d,goals:goals.filter((_,j)=>j!==i)});
+  useEffect(()=>{if(!d.goals?.length)set({...d,goals:[{school:'',faculty:'',examType:'一般入試'}]});},[]);
+  return(<div className="fade-in">
+    <h2 className="text-2xl font-semibold mb-1 font-jp">志望校</h2>
+    <p className="text-ink-500 mb-6 font-jp text-sm">志望校と入試方式を教えてください</p>
+    <div className="space-y-3">{goals.map((g,i)=>(
+      <div key={i} className="bg-white rounded-xl p-4 border border-ink-100 step-card">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs font-medium text-accent font-jp">第{i+1}志望</span>
+          {i>0&&<button onClick={()=>rm(i)} className="text-ink-400 hover:text-accent text-xs font-jp">削除</button>}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <input placeholder="大学名" value={g.school} onChange={e=>upd(i,'school',e.target.value)} className="px-3 py-2.5 rounded-lg border border-ink-200 text-sm font-jp"/>
+          <input placeholder="学部・学科" value={g.faculty} onChange={e=>upd(i,'faculty',e.target.value)} className="px-3 py-2.5 rounded-lg border border-ink-200 text-sm font-jp"/>
+          <select value={g.examType} onChange={e=>upd(i,'examType',e.target.value)} className="px-3 py-2.5 rounded-lg border border-ink-200 text-sm font-jp">
+            {EXAM_TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select>
+        </div></div>))}</div>
+    {goals.length<3&&<button onClick={add} className="mt-3 text-sm text-accent hover:text-accent-dark font-jp flex items-center gap-1">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>志望校を追加</button>}
+    <div className="flex gap-3 mt-8">
+      <button onClick={back} className="flex-1 py-3.5 rounded-xl border border-ink-200 text-sm font-jp hover:bg-white transition">← 戻る</button>
+      <button onClick={next} disabled={!goals.some(g=>g.school)} className="flex-[2] py-3.5 rounded-xl bg-sumi text-washi font-medium text-sm hover:bg-sumi-light transition disabled:opacity-30 font-jp">次へ →</button>
+    </div>
+  </div>);
+}
+
+function S4({d,set,next,back}){
+  const subs=d.subjects||[];
+  const sc=d.scores||{};
+  const upSc=(s,f,v)=>set({...d,scores:{...sc,[s]:{...(sc[s]||{}),[f]:v}}});
+  return(<div className="fade-in">
+    <h2 className="text-2xl font-semibold mb-1 font-jp">成績を入力</h2>
+    <p className="text-ink-500 mb-6 font-jp text-sm">直近の模試結果を入力してください。わかる範囲でOKです。</p>
+    <div className="bg-white rounded-xl border border-ink-100 p-4 mb-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div><label className="block text-xs text-ink-500 mb-1 font-jp">総合偏差値</label>
+          <input type="number" placeholder="例: 52" value={d.totalDev||''} onChange={e=>set({...d,totalDev:e.target.value})} className="w-full px-3 py-2.5 rounded-lg border border-ink-200 text-sm font-jp"/></div>
+        <div><label className="block text-xs text-ink-500 mb-1 font-jp">模試名（任意）</label>
+          <input placeholder="例: 河合全統マーク" value={d.examName||''} onChange={e=>set({...d,examName:e.target.value})} className="w-full px-3 py-2.5 rounded-lg border border-ink-200 text-sm font-jp"/></div>
+      </div></div>
+    <div className="space-y-2">{subs.map(s=>(
+      <div key={s} className="bg-white rounded-xl p-3 border border-ink-100 step-card">
+        <span className="text-sm font-medium font-jp block mb-2">{s}</span>
+        <div className="grid grid-cols-3 gap-2">
+          <div><label className="text-[10px] text-ink-400 font-jp">偏差値</label><input type="number" placeholder="55" value={sc[s]?.dev||''} onChange={e=>upSc(s,'dev',e.target.value)} className="w-full px-2 py-2 rounded-lg border border-ink-200 text-sm font-jp"/></div>
+          <div><label className="text-[10px] text-ink-400 font-jp">得点</label><input type="number" placeholder="72" value={sc[s]?.pt||''} onChange={e=>upSc(s,'pt',e.target.value)} className="w-full px-2 py-2 rounded-lg border border-ink-200 text-sm font-jp"/></div>
+          <div><label className="text-[10px] text-ink-400 font-jp">満点</label><input type="number" placeholder="100" value={sc[s]?.max||''} onChange={e=>upSc(s,'max',e.target.value)} className="w-full px-2 py-2 rounded-lg border border-ink-200 text-sm font-jp"/></div>
+        </div></div>))}</div>
+    <div className="mt-5">
+      <label className="block text-xs font-medium text-ink-600 mb-2 font-jp">次の模試の予定</label>
+      <div className="flex flex-wrap gap-2">{NEXT_EXAMS.map(o=>(
+        <span key={o} onClick={()=>set({...d,nextExam:o})} className={`chip font-jp ${d.nextExam===o?'chip-on':'chip-off'}`}>{o}</span>))}</div></div>
+    <div className="flex gap-3 mt-8">
+      <button onClick={back} className="flex-1 py-3.5 rounded-xl border border-ink-200 text-sm font-jp hover:bg-white transition">← 戻る</button>
+      <button onClick={next} className="flex-[2] py-3.5 rounded-xl bg-accent text-white font-medium text-sm hover:bg-accent-dark transition font-jp">AIプランを生成 ✦</button>
+    </div>
+  </div>);
+}
+
+function Result({plan,exam,sPlan,sExam,reset,genExam,examDone}){
+  const[tab,setTab]=useState('plan');
+  const ref=useRef(null);
+  const txt=tab==='plan'?plan:exam;
+  const str=tab==='plan'?sPlan:sExam;
+  useEffect(()=>{if(ref.current&&str)ref.current.scrollTop=ref.current.scrollHeight;},[txt,str]);
+  return(<div className="fade-in">
+    <div className="flex items-center justify-between mb-4">
+      <h2 className="text-xl font-semibold font-jp">あなたの学習プラン</h2>
+      <button onClick={reset} className="px-4 py-2 rounded-lg border border-ink-200 text-xs font-jp hover:bg-white transition">最初からやり直す</button>
+    </div>
+    <div className="flex gap-2 mb-4">
+      <button onClick={()=>setTab('plan')} className={`tab-btn font-jp ${tab==='plan'?'tab-a':'tab-i'}`}>長期プラン</button>
+      <button onClick={()=>{setTab('exam');if(!examDone)genExam();}} className={`tab-btn font-jp ${tab==='exam'?'tab-a':'tab-i'}`}>次の模試対策</button>
+    </div>
+    {txt?(<div ref={ref} className="bg-white rounded-2xl border border-ink-100 p-5 sm:p-7 max-h-[70vh] overflow-y-auto">
+      {str&&<div className="flex items-center gap-1.5 mb-3"><span className="w-1.5 h-1.5 rounded-full bg-accent pulse-dot"/><span className="text-xs text-ink-400 font-jp">生成中...</span></div>}
+      <div className="mc font-jp text-sm text-ink-800 leading-relaxed" dangerouslySetInnerHTML={{__html:md(txt)}}/>
+    </div>):(<div className="flex flex-col items-center py-16 fade-in">
+      <div className="flex gap-1.5 mb-6"><div className="w-2.5 h-2.5 rounded-full bg-accent typing-dot"/><div className="w-2.5 h-2.5 rounded-full bg-accent typing-dot"/><div className="w-2.5 h-2.5 rounded-full bg-accent typing-dot"/></div>
+      <p className="text-ink-500 font-jp text-sm">{tab==='plan'?'長期プランを生成中...':'模試対策を生成中...'}</p></div>)}
+    {!str&&txt&&(<div className="mt-4 slide-up"><button onClick={()=>{
+      const b=new Blob([txt],{type:'text/markdown'});const u=URL.createObjectURL(b);
+      const a=document.createElement('a');a.href=u;a.download=tab==='plan'?'study-plan.md':'exam-strategy.md';a.click();URL.revokeObjectURL(u);
+    }} className="w-full py-3 rounded-xl border border-ink-200 text-sm font-jp hover:bg-white transition flex items-center justify-center gap-2">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Markdownで保存</button></div>)}
+  </div>);
+}
+
+function App(){
+  const[step,setStep]=useState(0);
+  const[d,setD]=useState(()=>ld()?.d||{goals:[],subjects:['英語']});
+  const[plan,setPlan]=useState(()=>ld()?.plan||'');
+  const[exam,setExam]=useState(()=>ld()?.exam||'');
+  const[sPlan,setSPlan]=useState(false);
+  const[sExam,setSExam]=useState(false);
+  const[examDone,setExamDone]=useState(()=>!!(ld()?.exam));
+  const[err,setErr]=useState('');
+  const[view,setView]=useState(()=>ld()?.plan?'result':'form');
+
+  useEffect(()=>{sv({d,plan,exam});},[d,plan,exam]);
+
+  const ctx=()=>{
+    const sl=(d.subjects||[]).map(s=>{const v=d.scores?.[s];
+      return v?.dev||v?.pt?`- ${s}: 偏差値${v.dev||'?'} / 得点${v.pt||'?'}/${v.max||'?'}`:`- ${s}: 未入力`;}).join('\n');
+    return `## 生徒情報\n- 学年: ${d.grade}\n- 文理: ${d.stream}\n- 平日学習時間: ${d.wdH}\n- 休日学習時間: ${d.weH}\n- 総合偏差値: ${d.totalDev||'未入力'}\n- 直近の模試: ${d.examName||'未入力'}\n- 次の模試予定: ${d.nextExam||'未定'}\n\n## 志望校\n${(d.goals||[]).filter(g=>g.school).map((g,i)=>`- 第${i+1}志望: ${g.school} ${g.faculty}（${g.examType}）`).join('\n')}\n\n## 受験科目（これ以外の科目は一切触れないでください）\n${(d.subjects||[]).join('、')}\n\n## 科目別成績\n${sl}`;
+  };
+
+  const genPlan=async()=>{
+    setErr('');setPlan('');setExam('');setExamDone(false);setSPlan(true);setView('result');
+    try{await callAI([{role:'system',content:SYS},{role:'user',content:ctx()+'\n\n'+PLAN_Q}],t=>setPlan(t));}catch(e){setErr(e.message);}
+    setSPlan(false);
+  };
+  const genExam=async()=>{
+    if(examDone)return;setExam('');setSExam(true);setExamDone(true);
+    try{await callAI([{role:'system',content:SYS},{role:'user',content:ctx()+'\n\n'+EXAM_Q}],t=>setExam(t));}catch(e){setErr(e.message);}
+    setSExam(false);
+  };
+  const reset=()=>{setD({goals:[],subjects:['英語']});setPlan('');setExam('');setExamDone(false);setStep(0);setView('form');setErr('');};
+  const labels=['基本情報','受験科目','志望校','成績入力'];
+
+  return(<div className="min-h-screen">
+    <header className="border-b border-ink-100 bg-washi/80 backdrop-blur-sm sticky top-0 z-40">
+      <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-sumi flex items-center justify-center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f8f6f1" strokeWidth="2" strokeLinecap="round"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+          </div><span className="font-semibold text-sm tracking-tight">StudyPath AI</span>
+        </div><span className="text-xs text-ink-400 font-jp">Powered by AI</span>
+      </div></header>
+    <main className="max-w-2xl mx-auto px-4 py-8">
+      {err&&<div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-jp fade-in">
+        <p className="font-medium mb-1">エラーが発生しました</p><p className="text-xs">{err}</p>
+        <button onClick={()=>setErr('')} className="mt-2 text-xs underline">閉じる</button></div>}
+      {view==='form'&&<><Steps c={step} t={4} labels={labels}/>
+        {step===0&&<S1 d={d} set={setD} next={()=>setStep(1)}/>}
+        {step===1&&<S2 d={d} set={setD} next={()=>setStep(2)} back={()=>setStep(0)}/>}
+        {step===2&&<S3 d={d} set={setD} next={()=>setStep(3)} back={()=>setStep(1)}/>}
+        {step===3&&<S4 d={d} set={setD} next={genPlan} back={()=>setStep(2)}/>}</>}
+      {view==='result'&&<Result plan={plan} exam={exam} sPlan={sPlan} sExam={sExam} reset={reset} genExam={genExam} examDone={examDone}/>}
+    </main>
+    <footer className="border-t border-ink-100 mt-16 py-6"><p className="text-center text-xs text-ink-400 font-jp">StudyPath AI — Data stored locally in your browser.</p></footer>
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
