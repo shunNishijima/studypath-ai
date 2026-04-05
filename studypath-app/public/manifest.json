@@ -1,0 +1,9 @@
+{
+  "name": "StudyPath AI",
+  "short_name": "StudyPath",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f12",
+  "theme_color": "#ff6b4a",
+  "description": "受験の最短ルートをAIが自動生成"
+}
