@@ -472,19 +472,53 @@ function Dashboard({ todos, streak, onToggle, onNavigate }: {
           今日のクエスト ({todayTodos.filter(t => t.status === 'done').length}/{todayTodos.length})
         </h2>
         {todayTodos.length === 0 ? (
-          <div className="card text-center py-8">
-            <p className="text-3xl mb-2">🎉</p>
-            <p className="text-sm text-[var(--text2)]">今日のクエストは全てクリア！</p>
-            <p className="text-xs text-[var(--text3)] mt-1">明日の冒険に備えて休もう</p>
+          <div className="card text-center py-6 mb-3">
+            <p className="text-2xl mb-1">✅</p>
+            <p className="text-sm text-[var(--text2)]">今日の分はクリア済み！</p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 mb-3">
             {todayTodos.map(todo => (
               <TodoCard key={todo.id} todo={todo} onToggle={onToggle} />
             ))}
           </div>
         )}
       </div>
+
+      {/* Upcoming quests - show next pending tasks beyond today */}
+      {(() => {
+        const upcomingTodos = todos
+          .filter(t => t.status !== 'done' && t.dueDate > todayStr)
+          .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.order - b.order)
+          .slice(0, 8);
+        if (upcomingTodos.length === 0) return null;
+
+        const todayAllDone = todayTodos.length > 0 && todayTodos.every(t => t.status === 'done');
+        return (
+          <div className="fade-up-3 mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-medium text-[var(--text2)]">
+                {todayAllDone ? '先に進もう！' : '次のクエスト'}
+              </h2>
+              {todayAllDone && (
+                <span className="text-[10px] bg-[var(--accent)]/20 text-[var(--accent)] px-2 py-0.5 rounded-full font-medium">
+                  前倒しOK
+                </span>
+              )}
+            </div>
+            <div className="space-y-2">
+              {upcomingTodos.map(todo => (
+                <div key={todo.id} className="relative">
+                  <div className="absolute left-0 top-0 text-[9px] text-[var(--text3)] bg-[var(--bg3)] px-1.5 py-0.5 rounded-br-lg rounded-tl-lg z-10">
+                    {formatDate(todo.dueDate)}
+                  </div>
+                  <TodoCard todo={todo} onToggle={onToggle} />
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Quick actions */}
       <div className="grid grid-cols-2 gap-3 mt-6 fade-up-4">
@@ -574,91 +608,186 @@ function PlanView({ plans, todos, onGenerate }: {
   const longTerm = plans['long_term'] || null;
   const mockExam = plans['mock_exam'] || null;
   const dungeons = useMemo(() => calcDungeonProgress(todos), [todos]);
+  const [activeTab, setActiveTab] = useState<'overview' | 'long_term' | 'mock_exam'>('overview');
 
-  const renderPhases = (plan: StudyPlan) => (
-    <div className="space-y-3">
-      {plan.phases.map((phase, i) => (
-        <div key={i} className="card">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-6 h-6 rounded-full bg-[var(--accent)] text-white text-xs flex items-center justify-center font-bold">
-              {i + 1}
-            </div>
-            <span className="text-sm font-medium">{phase.name}</span>
-          </div>
-          <p className="text-xs text-[var(--text2)] mb-1">{formatDate(phase.startDate)} 〜 {formatDate(phase.endDate)}</p>
-          <p className="text-xs text-[var(--text3)]">{phase.targetDescription}</p>
-          <div className="flex flex-wrap gap-1 mt-2">
-            {phase.focusSubjects.map(s => (
-              <span key={s} className="text-[10px] bg-[var(--bg3)] px-2 py-0.5 rounded-full">{getSubjectEmoji(s)} {s}</span>
-            ))}
-          </div>
+  // Group dungeons by subject
+  const dungeonsBySubject = useMemo(() => {
+    const grouped: Record<string, DungeonProgress[]> = {};
+    for (const d of dungeons) {
+      const sub = d.subject;
+      if (!grouped[sub]) grouped[sub] = [];
+      grouped[sub].push(d);
+    }
+    return grouped;
+  }, [dungeons]);
+
+  // Calculate per-subject overall progress
+  const subjectProgress = useMemo(() => {
+    const result: Record<string, { done: number; total: number }> = {};
+    for (const [sub, ds] of Object.entries(dungeonsBySubject)) {
+      const total = ds.reduce((s, d) => s + d.totalSteps, 0);
+      const done = ds.reduce((s, d) => s + d.completedSteps, 0);
+      result[sub] = { done, total };
+    }
+    return result;
+  }, [dungeonsBySubject]);
+
+  // Determine current phase based on today's date
+  const getCurrentPhaseIndex = (plan: StudyPlan) => {
+    const today = new Date().toISOString().split('T')[0];
+    for (let i = 0; i < plan.phases.length; i++) {
+      if (today >= plan.phases[i].startDate && today <= plan.phases[i].endDate) return i;
+    }
+    return 0;
+  };
+
+  const renderMilestones = (plan: StudyPlan, label: string) => {
+    const currentIdx = getCurrentPhaseIndex(plan);
+    const today = new Date().toISOString().split('T')[0];
+    return (
+      <div className="mb-6">
+        <h2 className="text-sm font-medium text-[var(--text2)] mb-3">{label}</h2>
+        {/* Timeline */}
+        <div className="relative">
+          {plan.phases.map((phase, i) => {
+            const isPast = today > phase.endDate;
+            const isCurrent = i === currentIdx;
+            const phaseTodos = todos.filter(t => t.phase === phase.name);
+            const phaseDone = phaseTodos.filter(t => t.status === 'done').length;
+            const phasePct = phaseTodos.length > 0 ? Math.round(phaseDone / phaseTodos.length * 100) : 0;
+
+            return (
+              <div key={i} className="flex gap-3 mb-4 last:mb-0">
+                {/* Timeline dot + line */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${
+                    isPast ? 'bg-[var(--success)] text-white' :
+                    isCurrent ? 'bg-[var(--accent)] text-white ring-2 ring-[var(--accent)]/30' :
+                    'bg-[var(--bg3)] text-[var(--text3)]'
+                  }`}>
+                    {isPast ? '✓' : i + 1}
+                  </div>
+                  {i < plan.phases.length - 1 && (
+                    <div className={`w-0.5 flex-1 min-h-[20px] ${isPast ? 'bg-[var(--success)]' : 'bg-[var(--bg3)]'}`} />
+                  )}
+                </div>
+                {/* Content */}
+                <div className={`card !p-3 flex-1 ${isCurrent ? 'card-glow' : ''} ${isPast ? 'opacity-60' : ''}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-xs font-medium ${isCurrent ? 'text-[var(--accent)]' : ''}`}>
+                      {isCurrent && '▶ '}{phase.name}
+                    </span>
+                    {phaseTodos.length > 0 && (
+                      <span className="text-[10px] font-bold text-[var(--accent)]">{phasePct}%</span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-[var(--text3)] mb-1">{formatDate(phase.startDate)} 〜 {formatDate(phase.endDate)}</p>
+                  <p className="text-[10px] text-[var(--text2)]">{phase.targetDescription}</p>
+                  {phaseTodos.length > 0 && (
+                    <div className="progress-track !h-1 mt-2">
+                      <div className="progress-fill" style={{ width: `${phasePct}%` }} />
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {phase.focusSubjects.map(s => (
+                      <span key={s} className="text-[10px] bg-[var(--bg3)] px-1.5 py-0.5 rounded-full">{getSubjectEmoji(s)} {s}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
-      ))}
-    </div>
-  );
+      </div>
+    );
+  };
 
   return (
     <div className="px-5 pt-8 pb-24">
-      <h1 className="text-xl font-bold mb-5 fade-up">冒険の地図</h1>
+      <h1 className="text-xl font-bold mb-4 fade-up">冒険の地図</h1>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-5 bg-[var(--bg2)] rounded-lg p-1 fade-up-1">
+        {([
+          { id: 'overview' as const, label: '科目別進捗' },
+          ...(longTerm ? [{ id: 'long_term' as const, label: '長期プラン' }] : []),
+          ...(mockExam ? [{ id: 'mock_exam' as const, label: '模試対策' }] : []),
+        ]).map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            className={`flex-1 text-xs py-2 rounded-md transition-all ${activeTab === tab.id ? 'bg-[var(--bg3)] font-medium' : 'text-[var(--text3)]'}`}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
       {/* Generate buttons */}
       <div className="grid grid-cols-2 gap-3 mb-6 fade-up-1">
-        <button className="card !p-4 text-center" onClick={() => onGenerate('long_term')}>
-          <span className="text-2xl">🏔️</span>
-          <p className="text-sm font-medium mt-2">長期プラン生成</p>
-          <p className="text-[10px] text-[var(--text3)]">合格までのルート</p>
+        <button className="card !p-3 text-center" onClick={() => onGenerate('long_term')}>
+          <span className="text-xl">🏔️</span>
+          <p className="text-xs font-medium mt-1">長期プラン{longTerm ? '再生成' : '生成'}</p>
         </button>
-        <button className="card !p-4 text-center" onClick={() => {
+        <button className="card !p-3 text-center" onClick={() => {
           const name = prompt('模試名を入力（例: 7月模試）');
           if (name) onGenerate('mock_exam', name);
         }}>
-          <span className="text-2xl">🎯</span>
-          <p className="text-sm font-medium mt-2">模試対策生成</p>
-          <p className="text-[10px] text-[var(--text3)]">直近の模試に向けて</p>
+          <span className="text-xl">🎯</span>
+          <p className="text-xs font-medium mt-1">模試対策{mockExam ? '再生成' : '生成'}</p>
         </button>
       </div>
 
-      {/* Dungeon overview */}
-      {dungeons.length > 0 && (
-        <div className="mb-6 fade-up-2">
-          <h2 className="text-sm font-medium text-[var(--text2)] mb-3">📖 教材ダンジョン一覧</h2>
-          <div className="space-y-2">
-            {dungeons.map(d => {
-              const pct = Math.round(d.completedSteps / d.totalSteps * 100);
-              const isCleared = pct === 100;
-              return (
-                <div key={d.materialId} className={`card !p-3 ${isCleared ? 'opacity-60' : ''}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span>{isCleared ? '🏆' : getSubjectEmoji(d.subject)}</span>
-                    <span className="text-xs font-medium flex-1 truncate">{d.materialName}</span>
-                    <span className={`text-xs font-bold ${isCleared ? 'text-[var(--success)]' : 'text-[var(--accent)]'}`}>
-                      {isCleared ? 'CLEAR!' : `${pct}%`}
-                    </span>
-                  </div>
-                  <div className="progress-track !h-1.5">
-                    <div className={`progress-fill ${isCleared ? '!bg-[var(--success)]' : ''}`} style={{ width: `${pct}%` }} />
-                  </div>
-                  <p className="text-[10px] text-[var(--text3)] mt-1">{d.completedSteps}/{d.totalSteps} ステップ</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Long-term plan */}
-      {longTerm && (
-        <div className="fade-up-2 mb-6">
-          <h2 className="text-sm font-medium text-[var(--text2)] mb-3">📈 長期プラン</h2>
-          {renderPhases(longTerm)}
-        </div>
-      )}
-
-      {/* Mock exam plan */}
-      {mockExam && (
+      {/* Overview tab - by subject */}
+      {activeTab === 'overview' && (
         <div className="fade-up-2">
-          <h2 className="text-sm font-medium text-[var(--text2)] mb-3">🎯 模試対策: {mockExam.mockExamName}</h2>
-          {renderPhases(mockExam)}
+          {Object.entries(dungeonsBySubject).map(([subject, subDungeons]) => {
+            const sp = subjectProgress[subject];
+            const subPct = sp.total > 0 ? Math.round(sp.done / sp.total * 100) : 0;
+            return (
+              <div key={subject} className="mb-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-base">{getSubjectEmoji(subject)}</span>
+                  <span className="text-sm font-medium flex-1">{subject}</span>
+                  <span className="text-xs font-bold text-[var(--accent)]">{subPct}%</span>
+                </div>
+                <div className="progress-track !h-1.5 mb-3">
+                  <div className="progress-fill" style={{ width: `${subPct}%` }} />
+                </div>
+                <div className="space-y-1.5 pl-2 border-l-2 border-[var(--bg3)]">
+                  {subDungeons.map(d => {
+                    const pct = d.totalSteps > 0 ? Math.round(d.completedSteps / d.totalSteps * 100) : 0;
+                    const isCleared = pct === 100;
+                    return (
+                      <div key={d.materialId} className={`flex items-center gap-2 py-1 ${isCleared ? 'opacity-50' : ''}`}>
+                        <span className="text-[10px]">{isCleared ? '🏆' : pct > 0 ? '📖' : '📕'}</span>
+                        <span className="text-xs flex-1 truncate">{d.materialName}</span>
+                        <div className="w-16">
+                          <div className="progress-track !h-1">
+                            <div className={`progress-fill ${isCleared ? '!bg-[var(--success)]' : ''}`} style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                        <span className={`text-[10px] w-8 text-right font-medium ${isCleared ? 'text-[var(--success)]' : 'text-[var(--text3)]'}`}>
+                          {pct}%
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Long-term plan tab */}
+      {activeTab === 'long_term' && longTerm && (
+        <div className="fade-up-2">
+          {renderMilestones(longTerm, '📈 マイルストーン')}
+        </div>
+      )}
+
+      {/* Mock exam plan tab */}
+      {activeTab === 'mock_exam' && mockExam && (
+        <div className="fade-up-2">
+          {renderMilestones(mockExam, `🎯 模試対策: ${mockExam.mockExamName}`)}
         </div>
       )}
     </div>
