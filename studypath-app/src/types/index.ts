@@ -32,6 +32,8 @@ export interface Todo {
   unit: string;
   task: string;
   material: string;
+  materialId?: string;       // curriculum material ID (e.g. "英語_01")
+  stepIndex?: number;         // which step in the material
   estimatedMinutes: number;
   dueDate: string;
   weekOf: string;
@@ -39,6 +41,8 @@ export interface Todo {
   completedAt?: string;
   order: number;
   phase: string;
+  planType?: 'long_term' | 'mock_exam';
+  questType?: 'normal' | 'boss' | 'checkpoint';
 }
 
 export interface Phase {
@@ -68,4 +72,15 @@ export interface WeekSummary {
   bySubject: Record<string, { total: number; completed: number }>;
 }
 
-export type AppView = 'onboarding' | 'dashboard' | 'plan' | 'weekly' | 'chat';
+// ─── Gamification ───
+
+export interface DungeonProgress {
+  materialId: string;
+  materialName: string;
+  subject: string;
+  totalSteps: number;
+  completedSteps: number;
+  currentStepIndex: number;
+}
+
+export type AppView = 'onboarding' | 'dashboard' | 'plan' | 'weekly' | 'chat' | 'profile';

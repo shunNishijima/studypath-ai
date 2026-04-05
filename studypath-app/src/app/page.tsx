@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { GRADES, STREAMS, SUBJECTS, MOCK_EXAMS, EXAM_TYPES } from '@/lib/constants';
-import { getCurrentWeek, formatDate, getDayLabel, calcWeekSummary, calcStreak, getSubjectEmoji, getSubjectColor, generateId } from '@/lib/utils';
-import type { UserProfile, Todo, StudyPlan, AppView, Goal } from '@/types';
+import { getCurrentWeek, formatDate, getDayLabel, calcWeekSummary, calcStreak, getSubjectEmoji, generateId } from '@/lib/utils';
+import type { UserProfile, Todo, StudyPlan, AppView, Goal, DungeonProgress } from '@/types';
 
 const STORAGE = 'studypath_v3';
 
@@ -14,6 +14,58 @@ function load<T>(key: string): T | null {
   try { const d = localStorage.getItem(`${STORAGE}_${key}`); return d ? JSON.parse(d) : null; } catch { return null; }
 }
 
+// ─── Helpers ───
+
+function getQuestIcon(questType?: string): string {
+  switch (questType) {
+    case 'boss': return '👹';
+    case 'checkpoint': return '🏁';
+    default: return '⚔️';
+  }
+}
+
+function getQuestBorder(questType?: string): string {
+  switch (questType) {
+    case 'boss': return 'border-l-4 border-l-red-500';
+    case 'checkpoint': return 'border-l-4 border-l-yellow-500';
+    default: return 'border-l-4 border-l-[var(--accent)]';
+  }
+}
+
+/** Calculate dungeon (material) progress from todos */
+function calcDungeonProgress(todos: Todo[]): DungeonProgress[] {
+  const byMaterial = new Map<string, { todos: Todo[]; materialName: string; subject: string }>();
+  for (const t of todos) {
+    if (!t.materialId) continue;
+    if (!byMaterial.has(t.materialId)) {
+      byMaterial.set(t.materialId, { todos: [], materialName: t.material, subject: t.subject });
+    }
+    byMaterial.get(t.materialId)!.todos.push(t);
+  }
+
+  const dungeons: DungeonProgress[] = [];
+  for (const [materialId, { todos: mTodos, materialName, subject }] of byMaterial) {
+    const maxStep = Math.max(...mTodos.map(t => t.stepIndex ?? 0));
+    const completedSteps = new Set(mTodos.filter(t => t.status === 'done').map(t => t.stepIndex)).size;
+    const currentStep = Math.min(...mTodos.filter(t => t.status !== 'done').map(t => t.stepIndex ?? 0));
+    dungeons.push({
+      materialId,
+      materialName,
+      subject,
+      totalSteps: maxStep + 1,
+      completedSteps,
+      currentStepIndex: currentStep,
+    });
+  }
+  return dungeons.sort((a, b) => {
+    const aProgress = a.completedSteps / a.totalSteps;
+    const bProgress = b.completedSteps / b.totalSteps;
+    if (aProgress === 1 && bProgress !== 1) return 1;
+    if (bProgress === 1 && aProgress !== 1) return -1;
+    return bProgress - aProgress;
+  });
+}
+
 // ─── Bottom Navigation ───
 function BottomNav({ view, onNavigate, hasPlan }: { view: AppView; onNavigate: (v: AppView) => void; hasPlan: boolean }) {
   if (!hasPlan) return null;
@@ -22,6 +74,7 @@ function BottomNav({ view, onNavigate, hasPlan }: { view: AppView; onNavigate: (
     { id: 'weekly', label: 'カレンダー', icon: '📅' },
     { id: 'plan', label: 'プラン', icon: '🗺️' },
     { id: 'chat', label: 'AI相談', icon: '💬' },
+    { id: 'profile', label: 'ステータス', icon: '👤' },
   ];
   return (
     <nav className="bottom-nav">
@@ -65,7 +118,6 @@ function Onboarding({ onComplete }: { onComplete: (profile: UserProfile) => void
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Header */}
       <div className="px-5 pt-12 pb-6">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-xl bg-[var(--accent)] flex items-center justify-center text-white text-lg">📚</div>
@@ -74,7 +126,6 @@ function Onboarding({ onComplete }: { onComplete: (profile: UserProfile) => void
             <p className="text-xs text-[var(--text3)]">受験の最短ルートをAIが作成</p>
           </div>
         </div>
-        {/* Progress */}
         <div className="flex gap-2 mb-2">
           {Array.from({ length: totalSteps }, (_, i) => (
             <div key={i} className={`flex-1 h-1 rounded-full transition-all duration-300 ${i <= step ? 'bg-[var(--accent)]' : 'bg-[var(--bg3)]'}`} />
@@ -84,11 +135,10 @@ function Onboarding({ onComplete }: { onComplete: (profile: UserProfile) => void
       </div>
 
       <div className="flex-1 px-5 pb-8">
-        {/* Step 0: Basic info */}
         {step === 0 && (
           <div className="fade-up space-y-6">
             <div>
-              <h2 className="text-xl font-bold mb-1">まずは基本情報から 🎓</h2>
+              <h2 className="text-xl font-bold mb-1">まずは基本情報から</h2>
               <p className="text-sm text-[var(--text2)]">学年と文理を教えてください</p>
             </div>
             <div>
@@ -121,7 +171,7 @@ function Onboarding({ onComplete }: { onComplete: (profile: UserProfile) => void
                 <label className="text-xs text-[var(--text2)] mb-2 block">休日の学習時間</label>
                 <select value={p.weekendHours} onChange={e => setP({ ...p, weekendHours: e.target.value })}>
                   <option value="">選択</option>
-                  {['2時間', '3時間', '4時間', '5時間', '6時間', '8時間以上'].map(h => <option key={h} value={h}>{h}</option>)}
+                  {['2時間', '3時間', '4時間', '5時���', '6時間', '8時間以上'].map(h => <option key={h} value={h}>{h}</option>)}
                 </select>
               </div>
             </div>
@@ -130,11 +180,10 @@ function Onboarding({ onComplete }: { onComplete: (profile: UserProfile) => void
           </div>
         )}
 
-        {/* Step 1: Subject selection */}
         {step === 1 && (
           <div className="fade-up space-y-6">
             <div>
-              <h2 className="text-xl font-bold mb-1">受験科目を選ぼう ✏️</h2>
+              <h2 className="text-xl font-bold mb-1">受験科目を選ぼう</h2>
               <p className="text-sm text-[var(--text2)]">実際に受験で使う科目だけ選んでね</p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -153,11 +202,10 @@ function Onboarding({ onComplete }: { onComplete: (profile: UserProfile) => void
           </div>
         )}
 
-        {/* Step 2: Goals */}
         {step === 2 && (
           <div className="fade-up space-y-6">
             <div>
-              <h2 className="text-xl font-bold mb-1">志望校を設定 🎯</h2>
+              <h2 className="text-xl font-bold mb-1">志望校を設定</h2>
               <p className="text-sm text-[var(--text2)]">目標がハッキリしてるほど、プランの精度UP</p>
             </div>
             <div className="space-y-3">
@@ -189,11 +237,10 @@ function Onboarding({ onComplete }: { onComplete: (profile: UserProfile) => void
           </div>
         )}
 
-        {/* Step 3: Scores */}
         {step === 3 && (
           <div className="fade-up space-y-6">
             <div>
-              <h2 className="text-xl font-bold mb-1">成績を入力 📊</h2>
+              <h2 className="text-xl font-bold mb-1">成績を入力</h2>
               <p className="text-sm text-[var(--text2)]">わかる範囲でOK！AIがギャップを分析するよ</p>
             </div>
             <div className="card">
@@ -244,7 +291,7 @@ function Onboarding({ onComplete }: { onComplete: (profile: UserProfile) => void
             <div className="flex gap-3">
               <button className="btn-secondary flex-1" onClick={() => setStep(2)}>← 戻る</button>
               <button className="btn-primary flex-[2]" onClick={() => onComplete(p)}>
-                🚀 AIプランを生成！
+                冒険を始める！
               </button>
             </div>
           </div>
@@ -254,10 +301,71 @@ function Onboarding({ onComplete }: { onComplete: (profile: UserProfile) => void
   );
 }
 
+// ─── Todo Card ───
+function TodoCard({ todo, onToggle }: { todo: Todo; onToggle: (id: string) => void }) {
+  const isDone = todo.status === 'done';
+  const isBoss = todo.questType === 'boss';
+  const isCheckpoint = todo.questType === 'checkpoint';
+
+  return (
+    <div className={`todo-card ${isDone ? 'done' : ''} ${getQuestBorder(todo.questType)}`}
+      onClick={() => onToggle(todo.id)}>
+      <div className="flex items-start gap-3">
+        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all ${
+          isDone ? 'bg-[var(--success)] border-[var(--success)]' :
+          isBoss ? 'border-red-500' :
+          isCheckpoint ? 'border-yellow-500' :
+          'border-[var(--border)]'
+        }`}>
+          {isDone ? <span className="text-white text-[10px]">✓</span> :
+           <span className="text-[10px]">{getQuestIcon(todo.questType)}</span>}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            {isBoss && <span className="text-[10px] font-bold text-red-400 bg-red-500/20 px-1.5 py-0.5 rounded">BOSS</span>}
+            {isCheckpoint && <span className="text-[10px] font-bold text-yellow-400 bg-yellow-500/20 px-1.5 py-0.5 rounded">復習</span>}
+          </div>
+          <p className={`text-sm mt-0.5 ${isDone ? 'line-through text-[var(--text3)]' : isBoss ? 'font-bold' : ''}`}>
+            {todo.task}
+          </p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-[10px] text-[var(--text3)]">{getSubjectEmoji(todo.subject)} {todo.subject}</span>
+            <span className="text-[10px] text-[var(--text3)]">{todo.material}</span>
+            <span className="text-[10px] text-[var(--text3)] ml-auto">{todo.estimatedMinutes}分</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Dungeon Progress Card ───
+function DungeonCard({ dungeon }: { dungeon: DungeonProgress }) {
+  const pct = dungeon.totalSteps > 0 ? Math.round(dungeon.completedSteps / dungeon.totalSteps * 100) : 0;
+  const isCleared = pct === 100;
+
+  return (
+    <div className={`card !p-3 min-w-[160px] flex-shrink-0 ${isCleared ? 'opacity-60' : ''}`}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-base">{isCleared ? '🏆' : getSubjectEmoji(dungeon.subject)}</span>
+        <span className="text-xs font-medium truncate">{dungeon.materialName}</span>
+      </div>
+      <div className="progress-track !h-2">
+        <div className={`progress-fill ${isCleared ? '!bg-[var(--success)]' : ''}`} style={{ width: `${pct}%` }} />
+      </div>
+      <div className="flex justify-between mt-1">
+        <span className="text-[10px] text-[var(--text3)]">{dungeon.completedSteps}/{dungeon.totalSteps}</span>
+        <span className={`text-[10px] font-bold ${isCleared ? 'text-[var(--success)]' : 'text-[var(--accent)]'}`}>
+          {isCleared ? 'CLEAR!' : `${pct}%`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ─── Dashboard ───
-function Dashboard({ todos, profile, streak, onToggle, onNavigate }: {
+function Dashboard({ todos, streak, onToggle, onNavigate }: {
   todos: Todo[];
-  profile: UserProfile;
   streak: number;
   onToggle: (id: string) => void;
   onNavigate: (v: AppView) => void;
@@ -265,16 +373,36 @@ function Dashboard({ todos, profile, streak, onToggle, onNavigate }: {
   const week = getCurrentWeek();
   const summary = calcWeekSummary(todos, week);
   const todayStr = new Date().toISOString().split('T')[0];
-  const todayTodos = todos.filter(t => t.dueDate === todayStr);
+  const todayTodos = todos.filter(t => t.dueDate === todayStr).sort((a, b) => {
+    // Boss quests last, then by order
+    if (a.questType === 'boss' && b.questType !== 'boss') return 1;
+    if (b.questType === 'boss' && a.questType !== 'boss') return -1;
+    return a.order - b.order;
+  });
   const pct = summary.totalTodos > 0 ? Math.round(summary.completedTodos / summary.totalTodos * 100) : 0;
+
+  // Dungeon progress
+  const dungeons = useMemo(() => calcDungeonProgress(todos), [todos]);
+  const activeDungeons = dungeons.filter(d => d.completedSteps < d.totalSteps);
+  const clearedDungeons = dungeons.filter(d => d.completedSteps >= d.totalSteps);
+
+  // Overall quest stats
+  const totalQuests = todos.length;
+  const doneQuests = todos.filter(t => t.status === 'done').length;
+  const bossQuests = todos.filter(t => t.questType === 'boss');
+  const clearedBosses = bossQuests.filter(t => t.status === 'done').length;
+
+  // Level calculation (1 level per 5 completed quests)
+  const level = Math.floor(doneQuests / 5) + 1;
+  const xpInLevel = doneQuests % 5;
 
   return (
     <div className="px-5 pt-8 pb-24">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6 fade-up">
+      {/* Header with level */}
+      <div className="flex items-center justify-between mb-5 fade-up">
         <div>
-          <p className="text-sm text-[var(--text2)]">おかえり 👋</p>
-          <h1 className="text-xl font-bold">今日のミッション</h1>
+          <p className="text-sm text-[var(--text2)]">おかえり！冒険者</p>
+          <h1 className="text-xl font-bold">Lv.{level} の冒険</h1>
         </div>
         <div className="flex items-center gap-2">
           {streak > 0 && (
@@ -286,8 +414,35 @@ function Dashboard({ todos, profile, streak, onToggle, onNavigate }: {
         </div>
       </div>
 
-      {/* Weekly progress */}
+      {/* Stats bar */}
+      <div className="grid grid-cols-3 gap-2 mb-5 fade-up-1">
+        <div className="card !p-3 text-center">
+          <p className="text-lg font-bold text-[var(--accent)]">{doneQuests}/{totalQuests}</p>
+          <p className="text-[10px] text-[var(--text3)]">クエスト</p>
+        </div>
+        <div className="card !p-3 text-center">
+          <p className="text-lg font-bold text-red-400">{clearedBosses}/{bossQuests.length}</p>
+          <p className="text-[10px] text-[var(--text3)]">ボス討伐</p>
+        </div>
+        <div className="card !p-3 text-center">
+          <p className="text-lg font-bold text-[var(--success)]">{clearedDungeons.length}/{dungeons.length}</p>
+          <p className="text-[10px] text-[var(--text3)]">教材クリア</p>
+        </div>
+      </div>
+
+      {/* XP progress to next level */}
       <div className="card card-glow mb-5 fade-up-1">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium">Lv.{level} → Lv.{level + 1}</span>
+          <span className="text-xs text-[var(--accent)]">{xpInLevel}/5 XP</span>
+        </div>
+        <div className="progress-track !h-2">
+          <div className="progress-fill" style={{ width: `${xpInLevel / 5 * 100}%` }} />
+        </div>
+      </div>
+
+      {/* Weekly progress */}
+      <div className="card mb-5 fade-up-2">
         <div className="flex items-center justify-between mb-3">
           <span className="text-sm font-medium">今週の進捗</span>
           <span className="text-2xl font-bold text-[var(--accent)]">{pct}%</span>
@@ -301,49 +456,31 @@ function Dashboard({ todos, profile, streak, onToggle, onNavigate }: {
         </div>
       </div>
 
-      {/* Subject breakdown */}
-      {Object.keys(summary.bySubject).length > 0 && (
-        <div className="flex gap-2 mb-5 overflow-x-auto pb-2 fade-up-2" style={{ scrollbarWidth: 'none' }}>
-          {Object.entries(summary.bySubject).map(([sub, data]) => (
-            <div key={sub} className="flex-shrink-0 card !p-3 min-w-[100px]">
-              <span className="text-lg">{getSubjectEmoji(sub)}</span>
-              <p className="text-xs text-[var(--text2)] mt-1 truncate">{sub}</p>
-              <p className="text-sm font-bold">{data.completed}/{data.total}</p>
-            </div>
-          ))}
+      {/* Active dungeons */}
+      {activeDungeons.length > 0 && (
+        <div className="mb-5 fade-up-2">
+          <h2 className="text-sm font-medium text-[var(--text2)] mb-3">📖 攻略中のダンジョン</h2>
+          <div className="flex gap-3 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }}>
+            {activeDungeons.map(d => <DungeonCard key={d.materialId} dungeon={d} />)}
+          </div>
         </div>
       )}
 
-      {/* Today's todos */}
+      {/* Today's quests */}
       <div className="fade-up-3">
         <h2 className="text-sm font-medium text-[var(--text2)] mb-3">
-          📋 今日のクエスト ({todayTodos.filter(t => t.status === 'done').length}/{todayTodos.length})
+          今日のクエスト ({todayTodos.filter(t => t.status === 'done').length}/{todayTodos.length})
         </h2>
         {todayTodos.length === 0 ? (
           <div className="card text-center py-8">
             <p className="text-3xl mb-2">🎉</p>
-            <p className="text-sm text-[var(--text2)]">今日のクエストはクリア済み！</p>
+            <p className="text-sm text-[var(--text2)]">今日のクエストは全てクリア！</p>
+            <p className="text-xs text-[var(--text3)] mt-1">明日の冒険に備えて休もう</p>
           </div>
         ) : (
           <div className="space-y-2">
             {todayTodos.map(todo => (
-              <div key={todo.id} className={`todo-card ${todo.status === 'done' ? 'done' : ''}`}
-                onClick={() => onToggle(todo.id)}>
-                <div className="flex items-start gap-3">
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all ${
-                    todo.status === 'done' ? 'bg-[var(--success)] border-[var(--success)]' : 'border-[var(--border)]'
-                  }`}>
-                    {todo.status === 'done' && <span className="text-white text-[10px]">✓</span>}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm ${todo.status === 'done' ? 'line-through text-[var(--text3)]' : ''}`}>{todo.task}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[10px] text-[var(--text3)]">{getSubjectEmoji(todo.subject)} {todo.subject}</span>
-                      <span className="text-[10px] text-[var(--text3)]">⏱ {todo.estimatedMinutes}分</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <TodoCard key={todo.id} todo={todo} onToggle={onToggle} />
             ))}
           </div>
         )}
@@ -366,7 +503,7 @@ function Dashboard({ todos, profile, streak, onToggle, onNavigate }: {
   );
 }
 
-// ─── Weekly Calendar ───
+// ���── Weekly Calendar ───
 function WeeklyCalendar({ todos, onToggle }: { todos: Todo[]; onToggle: (id: string) => void }) {
   const today = new Date();
   const weekStart = new Date(today);
@@ -407,9 +544,13 @@ function WeeklyCalendar({ todos, onToggle }: { todos: Todo[]; onToggle: (id: str
                 <div className="space-y-1">
                   {dayTodos.map(todo => (
                     <div key={todo.id} className="flex items-center gap-2 cursor-pointer" onClick={() => onToggle(todo.id)}>
-                      <div className={`w-3 h-3 rounded-full flex-shrink-0 ${todo.status === 'done' ? 'bg-[var(--success)]' : 'border border-[var(--border)]'}`} />
+                      <div className={`w-3 h-3 rounded-full flex-shrink-0 ${
+                        todo.status === 'done' ? 'bg-[var(--success)]' :
+                        todo.questType === 'boss' ? 'border-2 border-red-500' :
+                        'border border-[var(--border)]'
+                      }`} />
                       <span className={`text-xs truncate ${todo.status === 'done' ? 'line-through text-[var(--text3)]' : ''}`}>
-                        {getSubjectEmoji(todo.subject)} {todo.task}
+                        {todo.questType === 'boss' ? '👹 ' : ''}{getSubjectEmoji(todo.subject)} {todo.task}
                       </span>
                       <span className="text-[10px] text-[var(--text3)] ml-auto flex-shrink-0">{todo.estimatedMinutes}分</span>
                     </div>
@@ -425,13 +566,40 @@ function WeeklyCalendar({ todos, onToggle }: { todos: Todo[]; onToggle: (id: str
 }
 
 // ─── Plan View ───
-function PlanView({ plan, onGenerate }: { plan: StudyPlan | null; onGenerate: (type: 'long_term' | 'mock_exam', mockName?: string) => void }) {
-  const [genType, setGenType] = useState<'long_term' | 'mock_exam'>('long_term');
-  const [mockName, setMockName] = useState('');
+function PlanView({ plans, todos, onGenerate }: {
+  plans: Record<string, StudyPlan>;
+  todos: Todo[];
+  onGenerate: (type: 'long_term' | 'mock_exam', mockName?: string) => void;
+}) {
+  const longTerm = plans['long_term'] || null;
+  const mockExam = plans['mock_exam'] || null;
+  const dungeons = useMemo(() => calcDungeonProgress(todos), [todos]);
+
+  const renderPhases = (plan: StudyPlan) => (
+    <div className="space-y-3">
+      {plan.phases.map((phase, i) => (
+        <div key={i} className="card">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-6 h-6 rounded-full bg-[var(--accent)] text-white text-xs flex items-center justify-center font-bold">
+              {i + 1}
+            </div>
+            <span className="text-sm font-medium">{phase.name}</span>
+          </div>
+          <p className="text-xs text-[var(--text2)] mb-1">{formatDate(phase.startDate)} 〜 {formatDate(phase.endDate)}</p>
+          <p className="text-xs text-[var(--text3)]">{phase.targetDescription}</p>
+          <div className="flex flex-wrap gap-1 mt-2">
+            {phase.focusSubjects.map(s => (
+              <span key={s} className="text-[10px] bg-[var(--bg3)] px-2 py-0.5 rounded-full">{getSubjectEmoji(s)} {s}</span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <div className="px-5 pt-8 pb-24">
-      <h1 className="text-xl font-bold mb-5 fade-up">🗺️ 学習プラン</h1>
+      <h1 className="text-xl font-bold mb-5 fade-up">冒険の地図</h1>
 
       {/* Generate buttons */}
       <div className="grid grid-cols-2 gap-3 mb-6 fade-up-1">
@@ -450,31 +618,47 @@ function PlanView({ plan, onGenerate }: { plan: StudyPlan | null; onGenerate: (t
         </button>
       </div>
 
-      {/* Current plan display */}
-      {plan && (
-        <div className="fade-up-2">
-          <h2 className="text-sm font-medium text-[var(--text2)] mb-3">
-            {plan.type === 'long_term' ? '📈 長期プラン' : `🎯 模試対策: ${plan.mockExamName}`}
-          </h2>
-          <div className="space-y-3">
-            {plan.phases.map((phase, i) => (
-              <div key={i} className="card">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-6 h-6 rounded-full bg-[var(--accent)] text-white text-xs flex items-center justify-center font-bold">
-                    {i + 1}
+      {/* Dungeon overview */}
+      {dungeons.length > 0 && (
+        <div className="mb-6 fade-up-2">
+          <h2 className="text-sm font-medium text-[var(--text2)] mb-3">📖 教材ダンジョン一覧</h2>
+          <div className="space-y-2">
+            {dungeons.map(d => {
+              const pct = Math.round(d.completedSteps / d.totalSteps * 100);
+              const isCleared = pct === 100;
+              return (
+                <div key={d.materialId} className={`card !p-3 ${isCleared ? 'opacity-60' : ''}`}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span>{isCleared ? '🏆' : getSubjectEmoji(d.subject)}</span>
+                    <span className="text-xs font-medium flex-1 truncate">{d.materialName}</span>
+                    <span className={`text-xs font-bold ${isCleared ? 'text-[var(--success)]' : 'text-[var(--accent)]'}`}>
+                      {isCleared ? 'CLEAR!' : `${pct}%`}
+                    </span>
                   </div>
-                  <span className="text-sm font-medium">{phase.name}</span>
+                  <div className="progress-track !h-1.5">
+                    <div className={`progress-fill ${isCleared ? '!bg-[var(--success)]' : ''}`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <p className="text-[10px] text-[var(--text3)] mt-1">{d.completedSteps}/{d.totalSteps} ステップ</p>
                 </div>
-                <p className="text-xs text-[var(--text2)] mb-1">{formatDate(phase.startDate)} 〜 {formatDate(phase.endDate)}</p>
-                <p className="text-xs text-[var(--text3)]">{phase.targetDescription}</p>
-                <div className="flex gap-1 mt-2">
-                  {phase.focusSubjects.map(s => (
-                    <span key={s} className="text-[10px] bg-[var(--bg3)] px-2 py-0.5 rounded-full">{getSubjectEmoji(s)} {s}</span>
-                  ))}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
+        </div>
+      )}
+
+      {/* Long-term plan */}
+      {longTerm && (
+        <div className="fade-up-2 mb-6">
+          <h2 className="text-sm font-medium text-[var(--text2)] mb-3">📈 長期プラン</h2>
+          {renderPhases(longTerm)}
+        </div>
+      )}
+
+      {/* Mock exam plan */}
+      {mockExam && (
+        <div className="fade-up-2">
+          <h2 className="text-sm font-medium text-[var(--text2)] mb-3">🎯 模試対策: {mockExam.mockExamName}</h2>
+          {renderPhases(mockExam)}
         </div>
       )}
     </div>
@@ -491,7 +675,7 @@ function ChatView({ profile, todos }: { profile: UserProfile; todos: Todo[] }) {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const summary = calcWeekSummary(todos, getCurrentWeek());
-  const context = `学年: ${profile.grade}, 文理: ${profile.stream}, 科目: ${profile.subjects.join('・')}, 今週の完了率: ${summary.totalTodos > 0 ? Math.round(summary.completedTodos / summary.totalTodos * 100) : 0}%`;
+  const context = `学年: ${profile.grade}, 文理: ${profile.stream}, 科目: ${profile.subjects.join('・')}, 今���の完了率: ${summary.totalTodos > 0 ? Math.round(summary.completedTodos / summary.totalTodos * 100) : 0}%`;
 
   const send = async () => {
     if (!input.trim() || streaming) return;
@@ -530,7 +714,7 @@ function ChatView({ profile, todos }: { profile: UserProfile; todos: Todo[] }) {
           } catch {}
         }
       }
-    } catch (e) {
+    } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'エラーが発生しました。もう一度試してください。' }]);
     }
     setStreaming(false);
@@ -582,6 +766,181 @@ function ChatView({ profile, todos }: { profile: UserProfile; todos: Todo[] }) {
   );
 }
 
+// ─── Profile Editor ───
+function ProfileEditor({ profile, onSave, onNavigate }: {
+  profile: UserProfile;
+  onSave: (p: UserProfile) => void;
+  onNavigate: (v: AppView) => void;
+}) {
+  const [p, setP] = useState<UserProfile>({ ...profile });
+  const [saved, setSaved] = useState(false);
+
+  const avail = [...SUBJECTS.common, ...(SUBJECTS[p.stream] || SUBJECTS['文系'])];
+  const toggleSub = (s: string) => {
+    if (s === '英語') return;
+    setP({ ...p, subjects: p.subjects.includes(s) ? p.subjects.filter(x => x !== s) : [...p.subjects, s] });
+  };
+
+  const updScore = (sub: string, f: string, v: string) => {
+    setP({ ...p, scores: { ...p.scores, [sub]: { ...(p.scores[sub] || {}), [f]: v } } });
+  };
+
+  const updGoal = (i: number, f: keyof Goal, v: string | number) => {
+    const g = [...p.goals]; g[i] = { ...g[i], [f]: v }; setP({ ...p, goals: g });
+  };
+  const addGoal = () => setP({ ...p, goals: [...p.goals, { school: '', faculty: '', examType: '一般入試', priority: p.goals.length + 1 }] });
+  const rmGoal = (i: number) => setP({ ...p, goals: p.goals.filter((_, j) => j !== i) });
+
+  const handleSave = () => {
+    onSave(p);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="px-5 pt-8 pb-24">
+      <h1 className="text-xl font-bold mb-5 fade-up">👤 ステータス</h1>
+
+      {/* Basic info */}
+      <div className="card mb-4 fade-up-1">
+        <h2 className="text-sm font-medium mb-3">基本情報</h2>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div>
+            <label className="text-[10px] text-[var(--text3)] mb-1 block">学年</label>
+            <div className="flex flex-wrap gap-1">
+              {GRADES.map(g => (
+                <button key={g} onClick={() => setP({ ...p, grade: g })}
+                  className={`chip text-xs ${p.grade === g ? 'active' : ''}`}>{g}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] text-[var(--text3)] mb-1 block">文理</label>
+            <div className="flex gap-1">
+              {STREAMS.map(s => (
+                <button key={s} onClick={() => setP({ ...p, stream: s })}
+                  className={`chip text-xs ${p.stream === s ? 'active' : ''}`}>{s}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[10px] text-[var(--text3)] mb-1 block">平日学習時間</label>
+            <select value={p.weekdayHours} onChange={e => setP({ ...p, weekdayHours: e.target.value })} className="text-xs">
+              {['1時間', '2時間', '3時間', '4時間', '5時間以上'].map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-[var(--text3)] mb-1 block">休日学習時間</label>
+            <select value={p.weekendHours} onChange={e => setP({ ...p, weekendHours: e.target.value })} className="text-xs">
+              {['2時間', '3時間', '4時間', '5時間', '6時間', '8時間以上'].map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Subjects */}
+      <div className="card mb-4 fade-up-1">
+        <h2 className="text-sm font-medium mb-3">受験科目</h2>
+        <div className="flex flex-wrap gap-1.5">
+          {avail.map(s => (
+            <button key={s} onClick={() => toggleSub(s)}
+              className={`chip text-xs ${p.subjects.includes(s) ? 'active' : ''}`}>
+              {getSubjectEmoji(s)} {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Goals */}
+      <div className="card mb-4 fade-up-2">
+        <h2 className="text-sm font-medium mb-3">志望校</h2>
+        <div className="space-y-3">
+          {p.goals.map((g, i) => (
+            <div key={i} className="bg-[var(--bg2)] rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-medium text-[var(--accent)]">第{i + 1}志望</span>
+                {i > 0 && <button onClick={() => rmGoal(i)} className="text-[10px] text-[var(--text3)]">削除</button>}
+              </div>
+              <div className="space-y-1.5">
+                <input placeholder="大学名" value={g.school} onChange={e => updGoal(i, 'school', e.target.value)} className="text-xs" />
+                <input placeholder="学部・学科" value={g.faculty} onChange={e => updGoal(i, 'faculty', e.target.value)} className="text-xs" />
+                <select value={g.examType} onChange={e => updGoal(i, 'examType', e.target.value)} className="text-xs">
+                  {EXAM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
+          ))}
+        </div>
+        {p.goals.length < 3 && (
+          <button onClick={addGoal} className="text-xs text-[var(--accent)] mt-2">+ 志望校を追加</button>
+        )}
+      </div>
+
+      {/* Scores */}
+      <div className="card mb-4 fade-up-2">
+        <h2 className="text-sm font-medium mb-3">成績・偏差値</h2>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div>
+            <label className="text-[10px] text-[var(--text3)] mb-1 block">総合偏差値</label>
+            <input type="number" placeholder="52" value={p.totalDeviation || ''} onChange={e => setP({ ...p, totalDeviation: e.target.value })} className="text-xs" />
+          </div>
+          <div>
+            <label className="text-[10px] text-[var(--text3)] mb-1 block">模試名</label>
+            <input placeholder="河合全統マーク" value={p.examName || ''} onChange={e => setP({ ...p, examName: e.target.value })} className="text-xs" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          {p.subjects.map(sub => (
+            <div key={sub} className="bg-[var(--bg2)] rounded-lg p-2.5">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-sm">{getSubjectEmoji(sub)}</span>
+                <span className="text-xs font-medium">{sub}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                <div>
+                  <label className="text-[10px] text-[var(--text3)]">偏差値</label>
+                  <input type="number" placeholder="55" value={p.scores[sub]?.deviation || ''} onChange={e => updScore(sub, 'deviation', e.target.value)} className="text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-[var(--text3)]">得点</label>
+                  <input type="number" placeholder="72" value={p.scores[sub]?.score || ''} onChange={e => updScore(sub, 'score', e.target.value)} className="text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-[var(--text3)]">満点</label>
+                  <input type="number" placeholder="100" value={p.scores[sub]?.maxScore || ''} onChange={e => updScore(sub, 'maxScore', e.target.value)} className="text-xs" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Next exam */}
+      <div className="card mb-6 fade-up-3">
+        <h2 className="text-sm font-medium mb-3">次の模試</h2>
+        <div className="flex flex-wrap gap-1.5">
+          {MOCK_EXAMS.map(m => (
+            <button key={m} onClick={() => setP({ ...p, nextExam: m })}
+              className={`chip text-xs ${p.nextExam === m ? 'active' : ''}`}>{m}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Save button */}
+      <div className="space-y-3 fade-up-3">
+        <button className="btn-primary w-full" onClick={handleSave}>
+          {saved ? '保存しました！' : 'ステータスを保存'}
+        </button>
+        <p className="text-[10px] text-[var(--text3)] text-center">
+          保存後、プランタブからプランを再生成すると新しい成績が反映されます
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Loading Screen ───
 function Loading({ message }: { message: string }) {
   return (
@@ -602,24 +961,27 @@ export default function Home() {
   const [view, setView] = useState<AppView>('onboarding');
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [todos, setTodos] = useState<Todo[]>([]);
-  const [plan, setPlan] = useState<StudyPlan | null>(null);
+  const [plans, setPlans] = useState<Record<string, StudyPlan>>({});
   const [loading, setLoading] = useState('');
 
   // Load from localStorage on mount
   useEffect(() => {
     const p = load<UserProfile>('profile');
     const t = load<Todo[]>('todos');
-    const pl = load<StudyPlan>('plan');
+    const pl = load<Record<string, StudyPlan>>('plans') || (() => {
+      const old = load<StudyPlan>('plan');
+      return old ? { [old.type]: old } : {};
+    })();
     if (p) setProfile(p);
     if (t) setTodos(t);
-    if (pl) setPlan(pl);
+    if (Object.keys(pl).length > 0) setPlans(pl);
     if (p && t && t.length > 0) setView('dashboard');
   }, []);
 
   // Save to localStorage on change
   useEffect(() => { if (profile) save('profile', profile); }, [profile]);
   useEffect(() => { save('todos', todos); }, [todos]);
-  useEffect(() => { if (plan) save('plan', plan); }, [plan]);
+  useEffect(() => { if (Object.keys(plans).length > 0) save('plans', plans); }, [plans]);
 
   const streak = calcStreak(todos);
 
@@ -629,7 +991,7 @@ export default function Home() {
   };
 
   const generatePlan = async (p: UserProfile, type: 'long_term' | 'mock_exam', mockName?: string) => {
-    setLoading(type === 'long_term' ? '🏔️ 合格ルートを計算中...' : '🎯 模試対策を作成中...');
+    setLoading(type === 'long_term' ? '🏔️ 冒険ルートを計算中...' : '🎯 模試対策クエストを作成中...');
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
@@ -643,6 +1005,7 @@ export default function Home() {
         ...t,
         id: generateId(),
         status: 'pending' as const,
+        planType: type,
         weekOf: t.dueDate ? (() => { const d = new Date(t.dueDate!); d.setDate(d.getDate() - d.getDay() + 1); return d.toISOString().split('T')[0]; })() : getCurrentWeek(),
         order: t.order || i,
       }));
@@ -656,8 +1019,8 @@ export default function Home() {
         mockExamName: mockName,
       };
 
-      setPlan(newPlan);
-      setTodos(prev => [...prev.filter(t => t.status === 'done'), ...newTodos]); // keep completed, replace pending
+      setPlans(prev => ({ ...prev, [type]: newPlan }));
+      setTodos(prev => [...prev.filter(t => t.planType !== type), ...newTodos]);
       setView('dashboard');
     } catch (e) {
       alert('プラン生成に失敗しました。もう一度お試しください。');
@@ -682,12 +1045,12 @@ export default function Home() {
     <>
       {view === 'onboarding' && <Onboarding onComplete={handleOnboardingComplete} />}
       {view === 'dashboard' && profile && (
-        <Dashboard todos={todos} profile={profile} streak={streak} onToggle={toggleTodo} onNavigate={setView} />
+        <Dashboard todos={todos} streak={streak} onToggle={toggleTodo} onNavigate={setView} />
       )}
       {view === 'weekly' && <WeeklyCalendar todos={todos} onToggle={toggleTodo} />}
-      {view === 'plan' && <PlanView plan={plan} onGenerate={(type, mockName) => profile && generatePlan(profile, type, mockName)} />}
+      {view === 'plan' && <PlanView plans={plans} todos={todos} onGenerate={(type, mockName) => profile && generatePlan(profile, type, mockName)} />}
       {view === 'chat' && profile && <ChatView profile={profile} todos={todos} />}
-      <BottomNav view={view} onNavigate={setView} hasPlan={!!plan} />
+      <BottomNav view={view} onNavigate={setView} hasPlan={Object.keys(plans).length > 0} />
     </>
   );
 }

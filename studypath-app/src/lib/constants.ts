@@ -14,18 +14,27 @@ export const MOCK_EXAMS = [
 ] as const;
 
 export const SYSTEM_PROMPT = `あなたは日本の大学受験指導に精通した学習コーチAIです。
+Takechiyo塾のカリキュラムデータに基づいて学習プランを作成します。
 
 ## 最重要ルール
-- 生徒が選択した受験科目のみについてプランを作成すること。選択されていない科目は一切無視
+- **カリキュラムの教材とステップに完全に従うこと**。自分で教材を考案しない。
+- 各todoは必ずカリキュラム内の教材（materialId）とステップ番号（stepIndex）を指定すること
+- 生徒が選択した受験科目のみについてプランを作成すること
 - 科目別成績データを最大限活用し、弱点科目に多くの時間を配分すること
-- 推奨教材は現在の偏差値帯に合った具体的な書名で挙げること
 - 週次スケジュールは学習可能時間を超えないこと
-- 出力は必ず指定のJSON形式に従うこと
+- 教材の前提条件（prerequisite）を尊重し、順番通りに配置すること
 
-## トーン
-- 「勉強しなさい」ではなく「一緒にクリアしていこう」
-- ゲームのクエストのように、達成感を感じられる表現を使う
-- 小さな目標を多く設定し、完了の喜びを積み重ねられるようにする`;
+## クエストタイプ
+- **normal**: 通常のステップ（例: 英単語1~100を覚える）
+- **boss**: 突破テスト・実力テスト。ボス戦として特別扱い
+- **checkpoint**: フェーズの区切りとなる復習・まとめ
+
+## タスク名のルール
+- RPGのクエスト風に書く（例:「英単語100語の壁を突破せよ！」「数学IAダンジョン第1章を攻略！」）
+- ボス戦は特に盛り上がる名前に（例:「【BOSS】英単語1~600突破テストに挑め！」）
+- チェックポイントは「【復習】」で始める
+
+## 出力は必ず指定のJSON形式に従うこと`;
 
 export const PLAN_JSON_SCHEMA = {
   type: "object" as const,
@@ -46,30 +55,36 @@ export const PLAN_JSON_SCHEMA = {
           focusSubjects: { type: "array" as const, items: { type: "string" as const } },
         },
         required: ["name", "startDate", "endDate", "targetDescription", "focusSubjects"],
+        additionalProperties: false,
       },
     },
     todos: {
       type: "array" as const,
-      description: "日次レベルに分解されたTodoリスト（最低20個、最大50個）",
+      description: "カリキュラムに基づいたTodoリスト（最低20個、最大50個）",
       items: {
         type: "object" as const,
         properties: {
           subject: { type: "string" as const },
-          unit: { type: "string" as const },
-          task: { type: "string" as const, description: "具体的で実行可能なタスク名。ゲームのクエスト風に" },
-          material: { type: "string" as const, description: "具体的な教材名" },
+          unit: { type: "string" as const, description: "教材内の章・セクション名" },
+          task: { type: "string" as const, description: "クエスト風のタスク名" },
+          material: { type: "string" as const, description: "カリキュラムの教材名（そのまま）" },
+          materialId: { type: "string" as const, description: "カリキュラムの教材ID（例: 英語_01）" },
+          stepIndex: { type: "number" as const, description: "カリキュラムのステップ番号（0始まり）" },
+          questType: { type: "string" as const, enum: ["normal", "boss", "checkpoint"], description: "クエストタイプ" },
           estimatedMinutes: { type: "number" as const },
           dueDate: { type: "string" as const, description: "YYYY-MM-DD形式" },
           phase: { type: "string" as const },
           order: { type: "number" as const },
         },
-        required: ["subject", "unit", "task", "material", "estimatedMinutes", "dueDate", "phase", "order"],
+        required: ["subject", "unit", "task", "material", "materialId", "stepIndex", "questType", "estimatedMinutes", "dueDate", "phase", "order"],
+        additionalProperties: false,
       },
     },
     encouragement: {
       type: "string" as const,
-      description: "励ましのメッセージ（2-3文）"
+      description: "RPG風の励ましメッセージ（冒険の始まり風に2-3文）"
     },
   },
   required: ["analysis", "phases", "todos", "encouragement"],
+  additionalProperties: false,
 };
