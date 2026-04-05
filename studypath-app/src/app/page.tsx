@@ -1,11 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
 import { GRADES, STREAMS, SUBJECTS, MOCK_EXAMS, EXAM_TYPES } from '@/lib/constants';
 import { getCurrentWeek, formatDate, getDayLabel, calcWeekSummary, calcStreak, getSubjectEmoji, generateId } from '@/lib/utils';
+import { auth, googleProvider, isAdmin, getOrCreateUser, incrementPlanGeneration, canGeneratePlan, updateUserPlan, getAllUsers, FREE_PLAN_LIMITS } from '@/lib/firebase';
+import type { UserData } from '@/lib/firebase';
 import type { UserProfile, Todo, StudyPlan, AppView, Goal, DungeonProgress } from '@/types';
 
 const STORAGE = 'studypath_v3';
+const PAYMENT_LINK = process.env.NEXT_PUBLIC_PAYMENT_LINK || '';
 
 function save(key: string, data: unknown) {
   try { localStorage.setItem(`${STORAGE}_${key}`, JSON.stringify(data)); } catch {}
@@ -67,25 +71,38 @@ function calcDungeonProgress(todos: Todo[]): DungeonProgress[] {
 }
 
 // ─── Bottom Navigation ───
-function BottomNav({ view, onNavigate, hasPlan }: { view: AppView; onNavigate: (v: AppView) => void; hasPlan: boolean }) {
+function BottomNav({ view, onNavigate, hasPlan, userPlan, isAdminUser, onLogout }: {
+  view: AppView;
+  onNavigate: (v: AppView) => void;
+  hasPlan: boolean;
+  userPlan: 'free' | 'paid';
+  isAdminUser: boolean;
+  onLogout: () => void;
+}) {
   if (!hasPlan) return null;
-  const items: { id: AppView; label: string; icon: string }[] = [
+  const items: { id: AppView; label: string; icon: string; locked?: boolean }[] = [
     { id: 'dashboard', label: 'ホーム', icon: '🏠' },
     { id: 'weekly', label: 'カレンダー', icon: '📅' },
     { id: 'plan', label: 'プラン', icon: '🗺️' },
-    { id: 'chat', label: 'AI相談', icon: '💬' },
+    { id: 'chat', label: 'AI相談', icon: '💬', locked: userPlan === 'free' },
     { id: 'profile', label: 'ステータス', icon: '👤' },
+    ...(isAdminUser ? [{ id: 'admin' as AppView, label: '管理', icon: '⚙️' }] : []),
   ];
   return (
     <nav className="bottom-nav">
       <div className="max-w-lg mx-auto flex justify-around">
         {items.map(it => (
           <button key={it.id} onClick={() => onNavigate(it.id)}
-            className={`flex flex-col items-center gap-1 px-4 py-1 ${view === it.id ? 'tab-active' : 'text-[var(--text3)]'}`}>
+            className={`flex flex-col items-center gap-1 px-3 py-1 relative ${view === it.id ? 'tab-active' : 'text-[var(--text3)]'}`}>
             <span className="text-lg">{it.icon}</span>
+            {it.locked && <span className="absolute top-0 right-0 text-[8px]">🔒</span>}
             <span className="text-[10px] font-medium">{it.label}</span>
           </button>
         ))}
+        <button onClick={onLogout} className="flex flex-col items-center gap-1 px-3 py-1 text-[var(--text3)]">
+          <span className="text-lg">🚪</span>
+          <span className="text-[10px] font-medium">ログアウト</span>
+        </button>
       </div>
     </nav>
   );
@@ -1069,6 +1086,122 @@ function ProfileEditor({ profile, onSave }: {
   );
 }
 
+// ─── Login Screen ───
+function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  const handleGoogleLogin = async () => {
+    setLoggingIn(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+      onLogin();
+    } catch (e) {
+      console.error(e);
+      alert('ログインに失敗しました。もう一度お試しください。');
+    }
+    setLoggingIn(false);
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center px-6">
+      <div className="text-center mb-10 fade-up">
+        <p className="text-4xl mb-3">📚</p>
+        <h1 className="text-2xl font-bold mb-2">StudyPath AI</h1>
+        <p className="text-sm text-[var(--text2)]">AIが受験の最短ルートを作成</p>
+      </div>
+      <button onClick={handleGoogleLogin} disabled={loggingIn}
+        className="card !p-4 w-full max-w-xs flex items-center justify-center gap-3 fade-up-1">
+        <svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        <span className="text-sm font-medium">{loggingIn ? 'ログイン中...' : 'Googleでログイン'}</span>
+      </button>
+    </div>
+  );
+}
+
+// ─── Upgrade Prompt ───
+function UpgradePrompt({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-5">
+      <div className="card max-w-sm w-full !p-6 text-center">
+        <p className="text-3xl mb-3">🔒</p>
+        <h2 className="text-lg font-bold mb-2">無料プランの上限に達しました</h2>
+        <p className="text-sm text-[var(--text2)] mb-4">
+          無料プランではプラン生成は{FREE_PLAN_LIMITS.maxPlanGenerations}回までです。
+          有料プランにアップグレードすると、無制限のプラン生成とAIチャットが利用できます。
+        </p>
+        {PAYMENT_LINK && (
+          <a href={PAYMENT_LINK} target="_blank" rel="noopener noreferrer"
+            className="btn-primary w-full block mb-3 text-center">
+            有料プランに申し込む
+          </a>
+        )}
+        <p className="text-[10px] text-[var(--text3)] mb-3">
+          お支払い後、管理者が確認次第アカウントが有効化されます
+        </p>
+        <button onClick={onClose} className="text-xs text-[var(--text3)]">閉じる</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Admin Panel ───
+function AdminPanel({ onNavigate }: { onNavigate: (v: AppView) => void }) {
+  const [users, setUsers] = useState<(UserData & { uid: string })[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+
+  useEffect(() => {
+    getAllUsers().then(u => { setUsers(u); setLoadingUsers(false); });
+  }, []);
+
+  const togglePlan = async (uid: string, current: 'free' | 'paid') => {
+    const next = current === 'free' ? 'paid' : 'free';
+    if (!confirm(`このユーザーを「${next === 'paid' ? '有料' : '無料'}」に変更しますか？`)) return;
+    await updateUserPlan(uid, next);
+    setUsers(prev => prev.map(u => u.uid === uid ? { ...u, plan: next } : u));
+  };
+
+  return (
+    <div className="px-5 pt-8 pb-24">
+      <div className="flex items-center justify-between mb-5 fade-up">
+        <h1 className="text-xl font-bold">管理者パネル</h1>
+        <button onClick={() => onNavigate('dashboard')} className="text-xs text-[var(--accent)]">戻る</button>
+      </div>
+
+      {loadingUsers ? (
+        <p className="text-sm text-[var(--text3)]">読み込み中...</p>
+      ) : (
+        <div className="space-y-2 fade-up-1">
+          <p className="text-xs text-[var(--text3)] mb-3">登録ユーザー: {users.length}人</p>
+          {users.map(u => (
+            <div key={u.uid} className="card !p-3">
+              <div className="flex items-center gap-3">
+                {u.photoURL && (
+                  <img src={u.photoURL} alt="" className="w-8 h-8 rounded-full" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{u.displayName}</p>
+                  <p className="text-[10px] text-[var(--text3)] truncate">{u.email}</p>
+                  <p className="text-[10px] text-[var(--text3)]">
+                    プラン生成: {u.planGenerations}回 / 登録: {u.createdAt.split('T')[0]}
+                  </p>
+                </div>
+                <button onClick={() => togglePlan(u.uid, u.plan)}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-full ${
+                    u.plan === 'paid'
+                      ? 'bg-[var(--success)]/20 text-[var(--success)]'
+                      : 'bg-[var(--bg3)] text-[var(--text3)]'
+                  }`}>
+                  {u.plan === 'paid' ? '有料' : '無料'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Loading Screen ───
 function Loading({ message }: { message: string }) {
   return (
@@ -1086,30 +1219,66 @@ function Loading({ message }: { message: string }) {
 
 // ─── Main App ───
 export default function Home() {
-  const [view, setView] = useState<AppView>('onboarding');
+  const [view, setView] = useState<AppView>('login');
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [userData, setUserData] = useState<UserData | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [plans, setPlans] = useState<Record<string, StudyPlan>>({});
   const [loading, setLoading] = useState('');
+  const [showUpgrade, setShowUpgrade] = useState(false);
 
-  // Load from localStorage on mount
+  // Listen to auth state
   useEffect(() => {
-    const p = load<UserProfile>('profile');
-    const t = load<Todo[]>('todos');
-    const pl = load<Record<string, StudyPlan>>('plans') || (() => {
-      const old = load<StudyPlan>('plan');
-      return old ? { [old.type]: old } : {};
-    })();
-    if (p) setProfile(p);
-    if (t) setTodos(t);
-    if (Object.keys(pl).length > 0) setPlans(pl);
-    if (p && t && t.length > 0) setView('dashboard');
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      setFirebaseUser(user);
+      if (user) {
+        const ud = await getOrCreateUser(
+          user.uid,
+          user.email || '',
+          user.displayName || '',
+          user.photoURL || undefined
+        );
+        setUserData(ud);
+
+        // Load local data
+        const p = load<UserProfile>('profile');
+        const t = load<Todo[]>('todos');
+        const pl = load<Record<string, StudyPlan>>('plans') || (() => {
+          const old = load<StudyPlan>('plan');
+          return old ? { [old.type]: old } : {};
+        })();
+        if (p) setProfile(p);
+        if (t) setTodos(t);
+        if (Object.keys(pl).length > 0) setPlans(pl);
+
+        setView(p && t && t.length > 0 ? 'dashboard' : 'onboarding');
+      } else {
+        setView('login');
+        setUserData(null);
+      }
+      setAuthLoading(false);
+    });
+    return () => unsub();
   }, []);
 
   // Save to localStorage on change
   useEffect(() => { if (profile) save('profile', profile); }, [profile]);
   useEffect(() => { save('todos', todos); }, [todos]);
   useEffect(() => { if (Object.keys(plans).length > 0) save('plans', plans); }, [plans]);
+
+  // Refresh user data from Firestore (to pick up admin plan changes)
+  const refreshUserData = useCallback(async () => {
+    if (!firebaseUser) return;
+    const ud = await getOrCreateUser(
+      firebaseUser.uid,
+      firebaseUser.email || '',
+      firebaseUser.displayName || '',
+      firebaseUser.photoURL || undefined
+    );
+    setUserData(ud);
+  }, [firebaseUser]);
 
   const streak = calcStreak(todos);
 
@@ -1118,7 +1287,19 @@ export default function Home() {
     await generatePlan(p, 'long_term');
   };
 
+  const handleLogout = async () => {
+    await signOut(auth);
+    setView('login');
+  };
+
   const generatePlan = async (p: UserProfile, type: 'long_term' | 'mock_exam', mockName?: string) => {
+    // Check free plan limits
+    await refreshUserData();
+    if (userData && !canGeneratePlan(userData)) {
+      setShowUpgrade(true);
+      return;
+    }
+
     setLoading(type === 'long_term' ? '🏔️ 冒険ルートを計算中...' : '🎯 模試対策クエストを作成中...');
     try {
       const res = await fetch('/api/generate', {
@@ -1149,6 +1330,13 @@ export default function Home() {
 
       setPlans(prev => ({ ...prev, [type]: newPlan }));
       setTodos(prev => [...prev.filter(t => t.planType !== type), ...newTodos]);
+
+      // Track generation count
+      if (firebaseUser) {
+        await incrementPlanGeneration(firebaseUser.uid);
+        await refreshUserData();
+      }
+
       setView('dashboard');
     } catch (e) {
       alert('プラン生成に失敗しました。もう一度お試しください。');
@@ -1167,13 +1355,25 @@ export default function Home() {
     ));
   };
 
+  const handleNavigate = (v: AppView) => {
+    // Block chat for free users
+    if (v === 'chat' && userData && !FREE_PLAN_LIMITS.canUseChat && userData.plan === 'free') {
+      setShowUpgrade(true);
+      return;
+    }
+    setView(v);
+  };
+
+  if (authLoading) return <Loading message="読み込み中..." />;
   if (loading) return <Loading message={loading} />;
 
   return (
     <>
+      {showUpgrade && <UpgradePrompt onClose={() => setShowUpgrade(false)} />}
+      {view === 'login' && <LoginScreen onLogin={() => {}} />}
       {view === 'onboarding' && <Onboarding onComplete={handleOnboardingComplete} />}
       {view === 'dashboard' && profile && (
-        <Dashboard todos={todos} streak={streak} onToggle={toggleTodo} onNavigate={setView} />
+        <Dashboard todos={todos} streak={streak} onToggle={toggleTodo} onNavigate={handleNavigate} />
       )}
       {view === 'weekly' && <WeeklyCalendar todos={todos} onToggle={toggleTodo} />}
       {view === 'plan' && <PlanView plans={plans} todos={todos} onGenerate={(type, mockName) => profile && generatePlan(profile, type, mockName)} />}
@@ -1181,7 +1381,10 @@ export default function Home() {
       {view === 'profile' && profile && (
         <ProfileEditor profile={profile} onSave={setProfile} />
       )}
-      <BottomNav view={view} onNavigate={setView} hasPlan={Object.keys(plans).length > 0} />
+      {view === 'admin' && <AdminPanel onNavigate={handleNavigate} />}
+      <BottomNav view={view} onNavigate={handleNavigate} hasPlan={Object.keys(plans).length > 0}
+        userPlan={userData?.plan || 'free'} isAdminUser={isAdmin(firebaseUser?.email || null)}
+        onLogout={handleLogout} />
     </>
   );
 }

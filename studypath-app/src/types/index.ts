@@ -83,4 +83,4 @@ export interface DungeonProgress {
   currentStepIndex: number;
 }
 
-export type AppView = 'onboarding' | 'dashboard' | 'plan' | 'weekly' | 'chat' | 'profile';
+export type AppView = 'login' | 'onboarding' | 'dashboard' | 'plan' | 'weekly' | 'chat' | 'profile' | 'admin';

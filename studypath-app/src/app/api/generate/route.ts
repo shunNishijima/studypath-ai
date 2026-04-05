@@ -3,10 +3,9 @@ import OpenAI from 'openai';
 import { SYSTEM_PROMPT, PLAN_JSON_SCHEMA } from '@/lib/constants';
 import { buildCurriculumPrompt } from '@/data/curriculum';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 export async function POST(req: NextRequest) {
   try {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const body = await req.json();
     const { profile, planType, mockExamName } = body;
 

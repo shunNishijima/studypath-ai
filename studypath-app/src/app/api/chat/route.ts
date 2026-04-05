@@ -2,10 +2,9 @@ import { NextRequest } from 'next/server';
 import OpenAI from 'openai';
 import { SYSTEM_PROMPT } from '@/lib/constants';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 export async function POST(req: NextRequest) {
   try {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const { messages, context } = await req.json();
 
     const systemMsg = `${SYSTEM_PROMPT}
