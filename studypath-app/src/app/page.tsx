@@ -767,10 +767,9 @@ function ChatView({ profile, todos }: { profile: UserProfile; todos: Todo[] }) {
 }
 
 // ─── Profile Editor ───
-function ProfileEditor({ profile, onSave, onNavigate }: {
+function ProfileEditor({ profile, onSave }: {
   profile: UserProfile;
   onSave: (p: UserProfile) => void;
-  onNavigate: (v: AppView) => void;
 }) {
   const [p, setP] = useState<UserProfile>({ ...profile });
   const [saved, setSaved] = useState(false);
@@ -1050,6 +1049,9 @@ export default function Home() {
       {view === 'weekly' && <WeeklyCalendar todos={todos} onToggle={toggleTodo} />}
       {view === 'plan' && <PlanView plans={plans} todos={todos} onGenerate={(type, mockName) => profile && generatePlan(profile, type, mockName)} />}
       {view === 'chat' && profile && <ChatView profile={profile} todos={todos} />}
+      {view === 'profile' && profile && (
+        <ProfileEditor profile={profile} onSave={setProfile} />
+      )}
       <BottomNav view={view} onNavigate={setView} hasPlan={Object.keys(plans).length > 0} />
     </>
   );
