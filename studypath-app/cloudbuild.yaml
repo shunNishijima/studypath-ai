@@ -1,0 +1,16 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyDdsYAu_9Vu9yUpMnA0gaZJcpeYpLWWn_Y'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=studypath-ai-6610.firebaseapp.com'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_PROJECT_ID=studypath-ai-6610'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=studypath-ai-6610.firebasestorage.app'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=716424499822'
+      - '--build-arg=NEXT_PUBLIC_FIREBASE_APP_ID=1:716424499822:web:429616217c19adde17cc7f'
+      - '--build-arg=NEXT_PUBLIC_PAYMENT_LINK=https://www.kaihipay.jp/forms?form_code=8382630824891198'
+      - '-t'
+      - 'asia-northeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/studypath-ai'
+      - '.'
+images:
+  - 'asia-northeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/studypath-ai'
